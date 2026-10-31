@@ -37,6 +37,12 @@ class ReportTests(unittest.TestCase):
                 "{{仮リンク|ニコライ・チェボタリョフ|en|Nikolai "
                 "Chebotaryov}}",
                 "ニコライ・チェボタリョフ",
+                replaced_ills=(
+                    "{{仮リンク|ニコライ・チェボタリョフ|en|Nikolai "
+                    "Chebotaryov}}",
+                    "{{仮リンク|ニコライ・チェボタリョフ|en|"
+                    "Nikolai Chebotaryov|label=チェボタリョフ}}",
+                ),
             ),
             ReportRow(
                 BROKEN_REDIRECT,
@@ -67,7 +73,7 @@ class ReportTests(unittest.TestCase):
         )
         report = json.loads(text)
 
-        self.assertEqual(report["schema_version"], 1)
+        self.assertEqual(report["schema_version"], 2)
         self.assertEqual(
             report["generated_at"], "2026-10-27T03:00:00+00:00"
         )
@@ -124,6 +130,8 @@ class ReportTests(unittest.TestCase):
             "Chebotaryov}}",
         )
         self.assertEqual(redlink["wording"], "ニコライ・チェボタリョフ")
+        self.assertEqual(len(redlink["replaced_ills"]), 2)
+        self.assertEqual(report["items"][0]["replaced_ills"], [])
         self.assertEqual(
             report["items"][0]["log_note"],
             "転送先「旧先」 2024-01-01 移動（→ 新）: 改名",

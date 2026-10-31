@@ -6,7 +6,9 @@ from ill.resolved_redlinks.parsing.titles import TitleKey, TitleNormalizer
 from ill.resolved_redlinks.parsing.wikitext import (
     added_link_targets,
     ill_ja_names,
-    original_ill_and_wording,
+    ill_templates_for,
+    ill_wording,
+    internal_link_spans,
     page_link_state,
     parse_compare_body,
     removed_ill_templates,
@@ -88,44 +90,71 @@ class CompareTests(unittest.TestCase):
         self.assertIn("[[B. L. van der Waerden|B & L]]", added[0])
 
     def test_extracts_original_ill_template_and_display_wording(self):
-        """差分から置換された仮リンクとlabelまたは記事名を返す。"""
+        """差分から置換された仮リンクを拾い、labelまたは記事名を表示文字列にする。"""
         deleted, added = parse_compare_body(COMPARE_BODY)
         templates = removed_ill_templates(deleted, added)
 
+        matched = ill_templates_for(
+            templates,
+            "チャールズ・レノックス (第3代リッチモンド公)",
+            self.normalizer,
+        )
+
         self.assertEqual(
-            original_ill_and_wording(
-                templates,
-                "チャールズ・レノックス (第3代リッチモンド公)",
-                self.normalizer,
-            ),
-            (
+            matched,
+            [
                 "{{仮リンク|チャールズ・レノックス "
                 "(第3代リッチモンド公)|label=チャールズ・レノックス|en|"
-                "Charles Lennox}}",
-                "チャールズ・レノックス",
-            ),
+                "Charles Lennox}}"
+            ],
         )
-        self.assertIsNone(
-            original_ill_and_wording(
+        self.assertEqual(ill_wording(matched[0]), "チャールズ・レノックス")
+        self.assertEqual(
+            ill_templates_for(
                 templates,
                 "ジョージ・レノックス (1737-1805)",
                 self.normalizer,
-            )
+            ),
+            [],
         )
         self.assertEqual(
-            original_ill_and_wording(
-                iter([
-                    "{{仮リンク|イギリス領ソロモン諸島|en|"
-                    "British Solomon Islands}}"
-                ]),
-                "イギリス領ソロモン諸島",
-                self.normalizer,
-            ),
-            (
+            ill_wording(
                 "{{仮リンク|イギリス領ソロモン諸島|en|"
-                "British Solomon Islands}}",
-                "イギリス領ソロモン諸島",
+                "British Solomon Islands}}"
             ),
+            "イギリス領ソロモン諸島",
+        )
+
+    def test_internal_link_spans_point_into_original_text(self):
+        """リンク先と元の本文での位置を返し、コメントの中は除く。
+
+        中にリンクを含む画像のリンクは、終わりの位置を None にする。
+        """
+        text = "<!-- [[A]] -->[[B|b]] [[ファイル:X.jpg|[[C]]]]"
+
+        spans = internal_link_spans(text)
+
+        self.assertEqual(
+            [(target, text[start:end] if end else None)
+             for target, start, end in spans],
+            [("B", "[[B|b]]"), ("ファイル:X.jpg", None), ("C", "[[C]]")],
+        )
+
+    def test_collects_every_ill_for_the_target_in_order(self):
+        """同じ記事名の仮リンクを、名前の表記の違いも含めて出現順にすべて返す。"""
+        templates = [
+            "{{仮リンク|古鳥類|en|Archaeornithes|label=古鳥亜綱}}",
+            "{{仮リンク|別の記事|en|Other}}",
+            "{{ill2|古鳥類|en|Archaeornithes}}",
+            "{{仮リンク|古鳥類|en|Archaeornithes|label=古鳥亜綱}}",
+        ]
+
+        self.assertEqual(
+            ill_templates_for(templates, "古鳥類", self.normalizer),
+            [templates[0], templates[2], templates[3]],
+        )
+        self.assertEqual(
+            ill_templates_for(templates, "存在しない", self.normalizer), []
         )
 
     def test_picks_only_newly_added_links(self):

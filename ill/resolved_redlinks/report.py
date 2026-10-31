@@ -31,6 +31,7 @@ class ReportRow:
     original_ill: str | None = None
     wording: str | None = None
     original_ill_error: str | None = None
+    replaced_ills: tuple[str, ...] = ()
 
 
 def page_url(title: str) -> str:
@@ -77,7 +78,7 @@ def render_json_report(
         BROKEN_REDIRECT: sum(row.category == BROKEN_REDIRECT for row in rows),
     }
     report = {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at": generated_at.isoformat(),
         "timezone": "Asia/Tokyo",
         "dump_date": dump_date,
@@ -119,6 +120,7 @@ def render_json_report(
                 "original_ill": row.original_ill,
                 "wording": row.wording,
                 "original_ill_error": row.original_ill_error,
+                "replaced_ills": list(row.replaced_ills),
                 "log_note": row.log_note,
             }
             for row in rows

@@ -32,6 +32,8 @@ _IGNORED_REGIONS = re.compile(
 # リンクの開始だけを見る。閉じ括弧まで読むと、画像の説明文の中のリンク
 # （`[[File:…|[[リンク]]…]]`）を外側のリンクが飲み込んでしまうため。
 _INTERNAL_LINK = re.compile(r"\[\[([^\[\]|{}<>\n]+?)\s*(?=\||\]\])")
+# 中に別のリンクを含まない、閉じたリンク全体。
+_WHOLE_LINK = re.compile(r"\[\[[^\[\]]*\]\]")
 _TEMPLATE_OPENER = re.compile(r"\{\{\s*([^|{}]+?)\s*\|")
 _DIFF_CELL = re.compile(
     r'<td class="diff-(deleted|added)line[^"]*">(.*?)</td>', flags=re.DOTALL
@@ -50,6 +52,25 @@ def internal_link_targets(text: str) -> list[str]:
     作るリンク（`{{Main|…}}` など）は含まない。
     """
     return [match.group(1) for match in _INTERNAL_LINK.finditer(text)]
+
+
+def internal_link_spans(text: str) -> list[tuple[str, int, int | None]]:
+    """内部リンクのリンク先と、元の本文での開始・終了の位置を出現順に返す。
+
+    コメント・`<nowiki>`・`<pre>` の中のリンクは除く。中に別のリンクを含む
+    リンク（画像の説明文など）は、終わりの位置を None にする。
+    """
+    ignored = [
+        match.span() for match in _IGNORED_REGIONS.finditer(text)
+    ]
+    spans = []
+    for match in _INTERNAL_LINK.finditer(text):
+        start = match.start()
+        if any(begin <= start < end for begin, end in ignored):
+            continue
+        whole = _WHOLE_LINK.match(text, start)
+        spans.append((match.group(1), start, whole.end() if whole else None))
+    return spans
 
 
 def _template_name(name: str) -> str:
@@ -146,21 +167,30 @@ def removed_ill_templates(
     return result
 
 
-def original_ill_and_wording(
+def ill_templates_for(
     templates: Iterable[str],
     target_title: str,
     normalizer: TitleNormalizer,
-) -> tuple[str, str] | None:
-    """対象記事名に一致する元の仮リンクと、実際の表示文字列を返す。"""
+) -> list[str]:
+    """日本語版の記事名が対象記事名に一致する仮リンクを、出現順に返す。"""
     target_key = normalizer.key(target_title)
-    for template in templates:
-        parameters = parse_ill_template(template)
-        japanese_title = parameters.get("ja_name", "").strip()
-        if normalizer.key(japanese_title) != target_key:
-            continue
-        wording = parameters.get("label", "").strip() or japanese_title
-        return template, wording
-    return None
+    return [
+        template
+        for template in templates
+        if normalizer.key(
+            parse_ill_template(template).get("ja_name", "").strip()
+        )
+        == target_key
+    ]
+
+
+def ill_wording(template: str) -> str:
+    """仮リンクの実際の表示文字列（表示文言、なければ記事名）を返す。"""
+    parameters = parse_ill_template(template)
+    return (
+        parameters.get("label", "").strip()
+        or parameters.get("ja_name", "").strip()
+    )
 
 
 def added_link_targets(

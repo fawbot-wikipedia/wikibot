@@ -15,7 +15,8 @@ from ill.resolved_redlinks.parsing.summary import parse_summary_links
 from ill.resolved_redlinks.parsing.titles import TitleKey, TitleNormalizer
 from ill.resolved_redlinks.parsing.wikitext import (
     added_link_targets,
-    original_ill_and_wording,
+    ill_templates_for,
+    ill_wording,
     page_link_state,
     parse_compare_body,
     removed_ill_templates,
@@ -414,14 +415,14 @@ def run(
             original_ill_error = source_errors_by_revid.get(
                 record.edit.revid
             )
-            original_ill = None
+            replaced_ills: list[str] = []
             if original_ill_error is None:
-                original_ill = original_ill_and_wording(
+                replaced_ills = ill_templates_for(
                     source_templates_by_revid[record.edit.revid],
                     normalizer.display(record.target),
                     normalizer,
                 )
-                if original_ill is None:
+                if not replaced_ills:
                     original_ill_error = (
                         "版 {} の差分にリンク先「{}」の仮リンクが"
                         "見つかりません".format(
@@ -445,9 +446,16 @@ def run(
                         entry.target if entry else None,
                         status.redirect_target,
                     ),
-                    original_ill=original_ill[0] if original_ill else None,
-                    wording=original_ill[1] if original_ill else None,
+                    original_ill=(
+                        replaced_ills[0] if replaced_ills else None
+                    ),
+                    wording=(
+                        ill_wording(replaced_ills[0])
+                        if replaced_ills
+                        else None
+                    ),
                     original_ill_error=original_ill_error,
+                    replaced_ills=tuple(replaced_ills),
                 )
             )
 

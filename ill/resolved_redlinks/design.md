@@ -23,8 +23,9 @@
 | `parsing/summary.py` | 編集要約の判定と、リンク先の取り出し |
 | `parsing/titles.py` | ページ名の正規化（比較用のキー） |
 | `parsing/wikitext.py` | 本文の内部リンク・仮リンクの抽出、差分表からの「増えた内部リンク」と置換前の仮リンクの拾い出し |
+| `restore/rules.py` | Cewbotが入れた内部リンクを置換前の仮リンクに戻す規則（[仮リンクに戻す規則](#仮リンクに戻す規則)） |
 
-依存の向きは一方向にする。`parsing/` は通信もファイルの読み書きもせず、`parsing/` の外のモジュールに依存しない。`sources/` は `parsing/` と `paths.py` を使う。`pipeline.py` は `sources/`・`parsing/`・`report.py` を使う。`cli.py` は `pipeline.py` を呼び、引数の既定値に `paths.py`、件数の表示に `report.py` の分類名を使う。
+依存の向きは一方向にする。`parsing/` は通信もファイルの読み書きもせず、`parsing/` の外のモジュールに依存しない。`sources/` は `parsing/` と `paths.py` を使う。`pipeline.py` は `sources/`・`parsing/`・`report.py` を使う。`cli.py` は `pipeline.py` を呼び、引数の既定値に `paths.py`、件数の表示に `report.py` の分類名を使う。`restore/rules.py` は `parsing/` だけを使い、通信もファイルの読み書きもしない。
 
 APIの呼び出しは `wikiutil.mediawiki.MediaWikiSession`、ダンプの取得は `wikiutil.dumps`、仮リンクの引数の解析は `wikiutil.ill.parse_ill_template` を使う。APIとダンプの要求には、ツール名と連絡先を示す User-Agent（`sources/user_agent.py` の `USER_AGENT`）を付ける。
 
@@ -98,14 +99,38 @@ Cewbotが第1引数と違う名前でリンクを入れた編集は、元の仮�
 
 `<出力先>/YYYYMMDD_HHMMSS/resolved_ill_redlinks.json`（日本時間の取得日時）。UTF-8で出力し、日本語はエスケープしない。JSONの構造は次のとおり。
 
-- `schema_version`: JSON構造の版。初版は `1`。
+- `schema_version`: JSON構造の版。現在は `2`（`1` に `replaced_ills` を加えた）。
 - `generated_at`: 最終判定と最新版の確認を終えた時刻（ISO 8601、UTC）。出力先ディレクトリ名は同時刻の日本時間。
 - `timezone`: 編集日付の表示に使うタイムゾーン（`Asia/Tokyo`）。
 - `dump_date`: 一次判定に使ったダンプの日付。
 - `filters.namespaces`: 対象の名前空間番号と名前。
 - `filters.period`: 対象としたCewbot編集期間（`since`・`until`）。未指定の境界は `null`。
 - `counts`: 分類ごとの出力件数（`still_redlink`・`broken_redirect`）と、最新版にリンクが残っていなかった参考件数（`restored_ill`・`link_removed`）、削除・対象外の名前空間への移動で除外したページの件数（`page_gone`）。
-- `items`: 出力対象のリンク1件ごとのレコード。分類（`category`）、名前空間、ページ名とURL、リンク先とURL、置き換えた版のID・固定リンク・差分リンク・時刻・日本時間の日付、置換前の仮リンク（`original_ill`）と実際の表示文言（`wording`）、削除・移動の記録（`log_note`）を含む。元の仮リンクを特定できない場合、`original_ill` と `wording` は `null` とし、理由を `original_ill_error` に記録する。ページ名順、同じページ内ではリンク先の名前順に並べる。
+- `items`: 出力対象のリンク1件ごとのレコード。分類（`category`）、名前空間、ページ名とURL、リンク先とURL、置き換えた版のID・固定リンク・差分リンク・時刻・日本時間の日付、置換前の仮リンク（`original_ill`）と実際の表示文言（`wording`）、削除・移動の記録（`log_note`）を含む。元の仮リンクを特定できない場合、`original_ill` と `wording` は `null` とし、理由を `original_ill_error` に記録する。`replaced_ills` には、その版で消えた仮リンクのうち日本語版の記事名がリンク先に一致するものを、差分での出現順にすべて入れる（`original_ill` はその先頭）。特定できない場合は空の配列。ページ名順、同じページ内ではリンク先の名前順に並べる。
+
+## 仮リンクに戻す規則
+
+`restore/rules.py` は、JSONの項目と最新版の本文から、置換前の仮リンクに戻した本文を作る。通信しないので、リンク先が今も存在しないことや削除の記録は、呼び出し側が確かめる。
+
+- Cewbotが入れる内部リンクの形は、仮リンクの表示文言（`label`）があって記事名と違えば `[[記事名|表示文言]]`、そうでなければ `[[記事名]]`。記事名は仮リンクに書かれた表記のまま（2026-10の差分の抜き取りで確認）。
+- `replaced_ills` の仮リンクごとにこの形を作り、最新版のリンク先へのリンク（コメント・`<nowiki>`・`<pre>` の中を除く）を出現順に1つずつ、まだ使っていない形と突き合わせる。すべて突き合わせられたときだけ、それぞれを対応する仮リンクに置き換える。表記の違い（先頭の大文字・小文字、空白と `_`）もリンク先が同じなら数え、形が合わなければ戻さない。
+- 置き換えたあとの本文で、リンク先への内部リンクが消え、仮リンクになったことを確かめる。
+- 同じページの複数のリンク先は、リンク先ごとに判定する。戻せないリンク先があっても、ほかは戻す。
+- 削除が置き換えより前のもの、削除から30日たっていないものは戻さない（`deletion_wait_reason`）。削除の直後は、復帰や作り直しがありうるため。
+
+戻さない理由は次のとおり。
+
+| 理由 | 内容 |
+|---|---|
+| `target_exists` | リンク先が作り直されている |
+| `deleted_recently` | 削除から30日たっていない |
+| `deleted_before_replacement` | 削除が置き換えより前 |
+| `no_original_ill` | 置換前の仮リンクが分からない |
+| `no_link` | リンクが残っていない |
+| `link_changed` | リンクの形がCewbotが入れたものと違う |
+| `extra_links` | Cewbotが置き換えた数より多くリンクがある |
+| `not_restored` | 置き換えたあとの確認で、仮リンクになっていない |
+| `edit_failed` | 編集できなかった（保護、競合、エラー） |
 
 ## キャッシュ
 
