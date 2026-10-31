@@ -1,0 +1,15 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+
+# Virtual environments
+.venv
+
+# Secrets
+.env
+.env.*
+
+# 取得したデータと出力
+ill/resolved_redlinks/cache/
+ill/resolved_redlinks/input/
+ill/resolved_redlinks/output/

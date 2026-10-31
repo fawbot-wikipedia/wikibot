@@ -1,0 +1,16 @@
+[project]
+name = "wikibot"
+version = "0.1.0"
+description = "日本語版ウィキペディアの保守作業を自動化するツール集"
+readme = "README.md"
+requires-python = ">=3.15"
+dependencies = [
+    "requests>=2.32.5",
+    "wikiutil",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+wikiutil = { git = "https://github.com/fawbot-wikipedia/wikiutil", tag = "v0.1.0" }
