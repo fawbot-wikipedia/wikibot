@@ -15,8 +15,8 @@
 | `cli.py` | コマンドラインの入口。引数の解析と、件数の概要の表示。`__main__.py` から呼ぶ |
 | `pipeline.py` | 処理の流れ。編集の絞り込み、リンク先の集計、候補の追加、最終判定、最新版での分類、出力 |
 | `report.py` | JSONの出力 |
-| `paths.py` | 既定の置き場所（キャッシュ・ダンプ・出力）。いずれもこのパッケージの直下 |
-| `sources/api.py` | APIの呼び出し（投稿記録、差分、削除・移動の記録、リンク先の状態、最新版の本文） |
+| `paths.py` | 既定の置き場所（キャッシュ・ダンプ・出力・編集の間隔の記録・ログイン情報）。ログイン情報（リポジトリ直下の `.env`）のほかは、このパッケージの直下 |
+| `sources/api.py` | APIの呼び出し（投稿記録、差分、削除・移動の記録、リンク先の状態、最新版の本文、編集に使う最新版） |
 | `sources/dump.py` | `page.sql`・`redirect.sql` の取得・解析と、リンク先の一次判定 |
 | `sources/cache.py` | SQLiteのキャッシュ |
 | `sources/user_agent.py` | APIとダンプの要求に付ける User-Agent |
@@ -24,8 +24,11 @@
 | `parsing/titles.py` | ページ名の正規化（比較用のキー） |
 | `parsing/wikitext.py` | 本文の内部リンク・仮リンクの抽出、差分表からの「増えた内部リンク」と置換前の仮リンクの拾い出し |
 | `restore/rules.py` | Cewbotが入れた内部リンクを置換前の仮リンクに戻す規則（[仮リンクに戻す規則](#仮リンクに戻す規則)） |
+| `restore/runner.py` | 調査のJSONの候補を最新の状態で確かめ、戻す本文と結果を作る（[仮リンクに戻す処理](#仮リンクに戻す処理)） |
+| `restore/editor.py` | ボットのログインと、編集の間隔・緊急停止・保存 |
+| `restore/cli.py` | 戻す処理のコマンドラインの入口。`restore/__main__.py` から呼ぶ |
 
-依存の向きは一方向にする。`parsing/` は通信もファイルの読み書きもせず、`parsing/` の外のモジュールに依存しない。`sources/` は `parsing/` と `paths.py` を使う。`pipeline.py` は `sources/`・`parsing/`・`report.py` を使う。`cli.py` は `pipeline.py` を呼び、引数の既定値に `paths.py`、件数の表示に `report.py` の分類名を使う。`restore/rules.py` は `parsing/` だけを使い、通信もファイルの読み書きもしない。
+依存の向きは一方向にする。`parsing/` は通信もファイルの読み書きもせず、`parsing/` の外のモジュールに依存しない。`sources/` は `parsing/` と `paths.py` を使う。`pipeline.py` は `sources/`・`parsing/`・`report.py` を使う。`cli.py` は `pipeline.py` を呼び、引数の既定値に `paths.py`、件数の表示に `report.py` の分類名を使う。`restore/rules.py` は `parsing/` だけを使い、通信もファイルの読み書きもしない。`restore/editor.py` は `sources/api.py` を使う。`restore/runner.py` は `restore/rules.py`・`restore/editor.py`・`sources/api.py` と、分類名に `report.py` を使う。`restore/cli.py` は `restore/runner.py` と `restore/editor.py` を呼び、既定の調査のJSONを探すのに `paths.py` と `pipeline.py` の出力ファイル名を使う。
 
 APIの呼び出しは `wikiutil.mediawiki.MediaWikiSession`、ダンプの取得は `wikiutil.dumps`、仮リンクの引数の解析は `wikiutil.ill.parse_ill_template` を使う。APIとダンプの要求には、ツール名と連絡先を示す User-Agent（`sources/user_agent.py` の `USER_AGENT`）を付ける。
 
@@ -122,7 +125,9 @@ Cewbotが第1引数と違う名前でリンクを入れた編集は、元の仮�
 
 | 理由 | 内容 |
 |---|---|
-| `target_exists` | リンク先が作り直されている |
+| `page_gone` | ページが見つからない（削除・移動） |
+| `target_exists` | リンク先が作り直されている（転送ページを含む） |
+| `no_deletion` | リンク先の最後の削除・移動の記録が削除でない、または記録がない |
 | `deleted_recently` | 削除から30日たっていない |
 | `deleted_before_replacement` | 削除が置き換えより前 |
 | `no_original_ill` | 置換前の仮リンクが分からない |
@@ -131,6 +136,40 @@ Cewbotが第1引数と違う名前でリンクを入れた編集は、元の仮�
 | `extra_links` | Cewbotが置き換えた数より多くリンクがある |
 | `not_restored` | 置き換えたあとの確認で、仮リンクになっていない |
 | `edit_failed` | 編集できなかった（保護、競合、エラー） |
+
+## 仮リンクに戻す処理
+
+`python -m ill.resolved_redlinks.restore` は、調査のJSON（既定は `output/` の中でいちばん新しいもの）を読み、記事の `still_redlink` の項目をページごとにまとめて、最新の状態で確かめる。既定はドライランで、編集はしない。`--execute` を付けたときだけ編集する（[編集](#編集)）。
+
+1. `schema_version` が `2` でなければ止める（`replaced_ills` がないため）。
+2. リンク先の現在の状態を `prop=info` で50件ずつ確かめる。赤リンクなら、最後の削除・移動の記録を `list=logevents` で1件ずつ取る。
+3. ページの最新版を、ページ名で50件ずつ取る（`rvprop=ids|timestamp|content`、`curtimestamp`）。転送はたどらない（移動されたページの転送を編集しないため）。版の時刻と取得の時刻は、編集の競合の検出に使う。
+4. リンク先ごとに、状態・記録・30日の待ちで戻すかを決め、戻すものだけに[規則](#仮リンクに戻す規則)を当てる。
+5. 使った調査のJSONと同じディレクトリに、`restore_YYYYMMDD_HHMMSS.json`（ページごとの結果と件数）と `restore_YYYYMMDD_HHMMSS.diff`（編集するページの、変わった行だけの差分）を書く。
+
+結果のJSONは、`schema_version`（`1`）、`generated_at`、使った調査のJSON（`report`）、`dry_run`、`counts`（ページ数、編集する（した）ページ数、リンク先ごとの結果の件数。戻せたものは `restored`）、`pages`（ページ名、版のID、編集するか、保存した版のID `new_revision_id`、失敗の内容 `error`、リンク先ごとの戻した数と理由）を持つ。編集したときのファイル名は `restore_execute_YYYYMMDD_HHMMSS.json`・`.diff`。
+
+### 編集
+
+`--execute` では、リポジトリ直下の `.env` の `WIKIPEDIA_USERNAME`（`利用者名@BotPassword名`）と `WIKIPEDIA_BOT_PASSWORD` でログインする。ボットの利用者名は、ログイン名の `@` より前とし、コードには書かない。ログインした利用者がこの名前と違えば止める。
+
+ログインした利用者が `bot` グループに入っているかで、作法を切り替える。
+
+| | 承認前（`bot` グループなし） | 承認後（`bot` グループあり） |
+|---|---|---|
+| 送る引数 | `assert=user`、`bot` なし | `assert=bot`、`bot=1` |
+| 1回の実行で編集するページ数 | 10ページまで（`--max-edits` が大きくても10） | `--max-edits`（なければ上限なし） |
+
+どちらも、保存の前に人の確認は挟まない。
+
+ページ名順に、ページごとに次を行う。
+
+1. リンク先の状態と削除の記録、ページの最新版を取り直し、[規則](#仮リンクに戻す規則)で戻す本文を作る。ドライランの結果は使わない（時間がたっているため）。本文が変わらなければ次のページへ。
+2. 前の編集から間隔が空くまで待つ。間隔は60秒に0〜100秒の揺らぎを加えたもの。次に編集してよい時刻を `cache/edit_state.json` に記録し、実行をまたいでも守る。保存に失敗しても記録する。
+3. 会話ページに新しいメッセージがある（`meta=userinfo&uiprop=hasmsg`）か、停止用のページ `利用者:<ボット名>/停止` に空白以外の書き込みがあれば、保存せずに止める。
+4. 取得した版を基準に保存する（`wikiutil` の `MediaWikiSession.edit`。`baserevid`・`basetimestamp`・`starttimestamp`、`nocreate`、`maxlag=5`、`watchlist=nochange`）。要約は「解消済み仮リンクのリンク先が削除されたため、仮リンクに戻します: [[A]]、[[B]]（Cewbotの置き換え: [[特別:差分/版|版]]）」。リンク先が4件以上なら3件まで示して「ほか N件」とする。
+
+APIのエラー（編集の競合、保護など）はそのページを `edit_failed` にして続ける。通信の失敗では、編集が反映されたか分からないので止める。次の実行では最新版で判定し直すので、反映されていればリンクが残っておらず、二重には編集しない。
 
 ## キャッシュ
 
@@ -153,3 +192,6 @@ Cewbotが第1引数と違う名前でリンクを入れた編集は、元の仮�
 - SQLの値の解析（エスケープ、`NULL`）と一次判定（不存在・壊れた転送・転送表にない転送・他のウィキへの転送・二重転送）。
 - 投稿記録の初回取得の再開と、完了後の差分取得。
 - 最終判定、最新版での分類、削除・移動の記録の再利用、JSONの構造・値、差分からの元の仮リンクと表示文言の抽出。
+- 仮リンクに戻す規則（Cewbotの形、表示文言付き、複数か所、画像の説明文の中、コメントの中、文言の書き換え、数の超過、表記の違い、置き換え後の確認）と、削除からの待ち。
+- 戻す処理（記事の赤リンクだけの読み込み、古い版のJSONの拒否、リンク先の状態と記録による判定、ページがない場合、結果のJSONと差分）。
+- 編集（承認の前と後の引数、ログインした利用者の確認、間隔の記録と実行をまたいだ待ち、保存に失敗したときの記録、停止の理由、上限、APIのエラーでは続けて通信の失敗では止めること、要約）。

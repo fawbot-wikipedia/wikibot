@@ -5,6 +5,7 @@ description = "日本語版ウィキペディアの保守作業を自動化す�
 readme = "README.md"
 requires-python = ">=3.15"
 dependencies = [
+    "python-dotenv>=1.2.1",
     "requests>=2.32.5",
     "wikiutil",
 ]
@@ -13,4 +14,4 @@ dependencies = [
 package = false
 
 [tool.uv.sources]
-wikiutil = { git = "https://github.com/fawbot-wikipedia/wikiutil", tag = "v0.1.0" }
+wikiutil = { git = "https://github.com/fawbot-wikipedia/wikiutil", tag = "v0.2.0" }

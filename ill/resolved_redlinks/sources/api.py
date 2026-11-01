@@ -392,6 +392,68 @@ class LatestPage:
     text: str
 
 
+@dataclass(frozen=True)
+class EditablePage:
+    """編集に使うページの最新版。版の時刻と、取得した時刻を持つ。"""
+
+    title: str
+    namespace: int
+    revid: int
+    timestamp: str
+    text: str
+    fetched_at: str
+
+
+def fetch_pages_for_edit(
+    api: JaWikipediaApi, titles: Sequence[str]
+) -> dict[str, EditablePage]:
+    """ページ名ごとの最新版を返す。存在しないページは含まない。
+
+    転送はたどらない（移動されたページの転送を編集しないため）。結果の
+    キーは、渡したページ名のまま。
+    """
+    result: dict[str, EditablePage] = {}
+    for start in range(0, len(titles), BATCH_SIZE):
+        batch = list(titles[start:start + BATCH_SIZE])
+        normalized: dict[str, str] = {}
+        pages: dict[str, tuple[dict[str, Any], str]] = {}
+        for data in api.query_pages(
+            {
+                "prop": "revisions",
+                "titles": "|".join(batch),
+                "rvprop": "ids|timestamp|content",
+                "rvslots": "main",
+                "curtimestamp": 1,
+            }
+        ):
+            query = data.get("query", {})
+            for item in query.get("normalized", []):
+                normalized[item["from"]] = item["to"]
+            for page in query.get("pages", []):
+                pages[page.get("title", "")] = (
+                    page, data.get("curtimestamp", "")
+                )
+        for title in batch:
+            page, fetched_at = pages.get(
+                normalized.get(title, title), ({}, "")
+            )
+            revisions = page.get("revisions") or []
+            if page.get("missing") is not None or not revisions:
+                continue
+            main = revisions[0].get("slots", {}).get("main", {})
+            if "content" not in main:
+                continue
+            result[title] = EditablePage(
+                title=page["title"],
+                namespace=int(page["ns"]),
+                revid=int(revisions[0]["revid"]),
+                timestamp=revisions[0]["timestamp"],
+                text=main["content"],
+                fetched_at=fetched_at,
+            )
+    return result
+
+
 def fetch_latest_pages(
     api: JaWikipediaApi, pageids: Iterable[int]
 ) -> dict[int, LatestPage]:

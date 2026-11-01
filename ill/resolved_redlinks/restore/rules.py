@@ -17,7 +17,9 @@ from ill.resolved_redlinks.parsing.wikitext import (
 WAIT_DAYS = 30
 
 # 見送りの理由。
+PAGE_GONE = "page_gone"
 TARGET_EXISTS = "target_exists"
+NO_DELETION = "no_deletion"
 DELETED_RECENTLY = "deleted_recently"
 DELETED_BEFORE_REPLACEMENT = "deleted_before_replacement"
 NO_ORIGINAL_ILL = "no_original_ill"

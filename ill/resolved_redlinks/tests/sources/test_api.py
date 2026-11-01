@@ -141,5 +141,54 @@ class TargetStatusTests(unittest.TestCase):
         self.assertEqual(statuses["<"].state, wiki_api.INVALID)
 
 
+class EditablePageTests(unittest.TestCase):
+    """編集に使う最新版の取得を検証する。"""
+
+    def test_fetches_by_requested_title(self):
+        """渡したページ名で引けるようにし、存在しないページは含めない。"""
+
+        def responses(params):
+            """prop=revisions の応答を返す。"""
+            return {
+                "curtimestamp": "2026-11-01T00:00:00Z",
+                "query": {
+                    "normalized": [{"from": "a_b", "to": "A b"}],
+                    "pages": [
+                        {
+                            "title": "A b",
+                            "ns": 0,
+                            "revisions": [
+                                {
+                                    "revid": 5,
+                                    "timestamp": "2026-10-01T00:00:00Z",
+                                    "slots": {"main": {"content": "本文"}},
+                                }
+                            ],
+                        },
+                        {"title": "ない", "missing": True},
+                    ],
+                },
+            }
+
+        api = FakeApi(responses)
+
+        pages = wiki_api.fetch_pages_for_edit(api, ["a_b", "ない"])
+
+        self.assertEqual(
+            pages,
+            {
+                "a_b": wiki_api.EditablePage(
+                    "A b",
+                    0,
+                    5,
+                    "2026-10-01T00:00:00Z",
+                    "本文",
+                    "2026-11-01T00:00:00Z",
+                )
+            },
+        )
+        self.assertEqual(api.calls[0]["curtimestamp"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()
